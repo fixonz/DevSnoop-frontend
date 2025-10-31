@@ -1,0 +1,160 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Token {
+  id           String   @id @default(uuid())
+  mint         String   @unique
+  devWallet    String
+  traceStatus  String   @default("pending") @map("trace_status")
+  riskScore    Int      @default(0) @map("risk_score")
+  traceResults Json     @default("[]") @map("trace_results")
+  tokenAnalysis Json    @default("{}") @map("token_analysis")
+  launchSlot   BigInt?  @map("launch_slot")
+  // Token metadata for caching
+  symbol       String?
+  name         String?
+  imageUrl     String?  @map("image_url")
+  holdersCount Int      @default(0) @map("holders_count")
+  marketCap    Decimal  @default(0) @db.Decimal(20, 2) @map("market_cap")
+  price        Decimal  @default(0) @db.Decimal(20, 8)
+  priceChange24h Decimal @default(0) @db.Decimal(10, 4) @map("price_change_24h")
+  volume24h    Decimal  @default(0) @db.Decimal(20, 2) @map("volume_24h")
+  liquidity    Decimal  @default(0) @db.Decimal(20, 2)
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  // Relations
+  devFundedWallets DevFundedWallet[]
+  holderTracking   HolderTracking[]
+
+  @@map("tokens")
+}
+
+model DevFundedWallet {
+  id            String   @id @default(uuid())
+  amount        Decimal  @db.Decimal(20, 8)
+  tokenId       String   @map("token_id")
+  fundedBy      String   @map("funded_by")
+  timestamp     BigInt
+  walletAddress String   @map("wallet_address")
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  // Relations
+  token Token @relation(fields: [tokenId], references: [id], onDelete: Cascade)
+
+  @@unique([tokenId, walletAddress])
+  @@map("dev_funded_wallets")
+}
+
+model HolderTracking {
+  id                String   @id @default(uuid())
+  balance           Decimal  @db.Decimal(20, 8)
+  tokenId           String   @map("token_id")
+  username          String
+  timestamp         BigInt
+  walletAddress     String   @map("wallet_address")
+  priceAtTransaction Decimal? @db.Decimal(20, 8) @map("price_at_transaction")
+  createdAt         DateTime @default(now()) @map("created_at")
+
+  // Relations
+  token Token @relation(fields: [tokenId], references: [id], onDelete: Cascade)
+
+  @@map("holder_tracking")
+}
+
+model ReviewMetrics {
+  id              String   @id @default(uuid())
+  fakeCount       Int      @default(0) @map("fake_count")
+  cloutCount      Int      @default(0) @map("clout_count")
+  legitCount      Int      @default(0) @map("legit_count")
+  trollCount      Int      @default(0) @map("troll_count")
+  totalRaters     Int      @default(0) @map("total_raters")
+  chatterAddress  String   @map("chatter_address")
+  chatterUsername String   @map("chatter_username")
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  @@map("review_metrics")
+}
+
+model TrackedToken {
+  id           String   @id @default(uuid())
+  addedBy      String   @map("added_by")
+  tokenAddress String   @unique @map("token_address")
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  @@map("tracked_tokens")
+}
+
+model ChatterRating {
+  id              String   @id @default(uuid())
+  rating          String
+  tokenId         String   @map("token_id")
+  raterAddress    String   @map("rater_address")
+  chatterAddress  String   @map("chatter_address")
+  chatterUsername String   @map("chatter_username")
+  createdAt       DateTime @default(now()) @map("created_at")
+
+  @@unique([raterAddress, chatterAddress, tokenId])
+  @@map("chatter_ratings")
+}
+
+model WalletRating {
+  id              String   @id @default(uuid())
+  raterAddress    String   @map("rater_address")
+  targetAddress   String   @map("target_address")
+  ratingType      String   @map("rating_type")
+  confidenceScore Int      @default(50) @map("confidence_score")
+  tokenContext    String?  @map("token_context")
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  @@unique([raterAddress, targetAddress])
+  @@map("wallet_ratings")
+}
+
+model WalletReputation {
+  id             String   @id @default(uuid())
+  walletAddress  String   @unique @map("wallet_address")
+  totalRatings   Int      @default(0) @map("total_ratings")
+  legitCount     Int      @default(0) @map("legit_count")
+  trollCount     Int      @default(0) @map("troll_count")
+  fakeCount      Int      @default(0) @map("fake_count")
+  diligentCount  Int      @default(0) @map("diligent_count")
+  suspiciousCount Int     @default(0) @map("suspicious_count")
+  averageRating  Decimal  @default(0) @db.Decimal(3, 2) @map("average_rating")
+  isWhale        Boolean  @default(false) @map("is_whale")
+  whaleScore     Decimal  @default(0) @db.Decimal(5, 2) @map("whale_score")
+  lastUpdated    DateTime @default(now()) @map("last_updated")
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  @@map("wallet_reputations")
+}
+
+model ChatMessage {
+  id          String   @id @default(uuid())
+  roomId      String   @map("room_id")
+  message     String
+  tokenId     String   @map("token_id")
+  username    String
+  timestamp   String
+  messageType String   @default("REGULAR") @map("message_type")
+  userAddress String?  @map("user_address")
+  profileImage String? @map("profile_image")
+  swapData    String?  @map("swap_data") // JSON string for swap data
+  isFirstBuyer Boolean @default(false) @map("is_first_buyer")
+  isTopHolder  Boolean @default(false) @map("is_top_holder")
+  holderRank   Int?    @map("holder_rank")
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  @@map("chat_messages")
+}

@@ -1,0 +1,31 @@
+/* App-specific styles */
+.app-container {
+  @apply min-h-screen bg-gray-900;
+}
+
+.main-layout {
+  @apply flex h-screen;
+}
+
+.sidebar {
+  @apply w-1/5 bg-gray-800 border-r border-gray-700 flex flex-col;
+}
+
+.main-content {
+  @apply flex-1 flex flex-col overflow-hidden;
+}
+
+/* Responsive design */
+@media (max-width: 768px) {
+  .main-layout {
+    @apply flex-col;
+  }
+  
+  .sidebar {
+    @apply w-full h-16 border-r-0 border-b border-gray-700;
+  }
+  
+  .main-content {
+    @apply flex-1;
+  }
+}

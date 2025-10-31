@@ -1,0 +1,13 @@
+{
+  "version": 2,
+  "env": {
+    "VITE_API_URL": "https://chatscanfun.vercel.app",
+    "VITE_HELIUS_API_KEY": "10d64fda-22a9-4d18-9209-712683742a1d",
+    "VITE_SHYFT_API_KEY": "dmLD1Y7HFOq_cDWV",
+    "HELIUS_API_KEY": "10d64fda-22a9-4d18-9209-712683742a1d",
+    "HELIUS_ADMIN_KEY": "10d64fda-22a9-4d18-9209-712683742a1d",
+    "SHYFT_API_KEY": "dmLD1Y7HFOq_cDWV",
+    "DEXSCREENER_API_KEY": "your-dexscreener-key",
+    "SOLANATRACKER_API_KEY": "8cbada97-f080-4be4-ab98-51a02101fd0d"
+  }
+}
