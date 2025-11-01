@@ -200,6 +200,101 @@ export async function getWalletInfo(walletAddress, specificTokenMint = null, con
 }
 
 /**
+ * Get COMPREHENSIVE wallet information including transactions, account states, and everything
+ * This is the FULL data fetch for wallet modals
+ * @param {string} walletAddress - Public key as string
+ * @param {string} specificTokenMint - Optional: specific token to track
+ * @param {number} transactionLimit - Number of recent transactions to fetch (default: 20)
+ * @param {Connection} connection - Optional connection
+ * @returns {Promise<{sol: object, tokens: Array, specificToken: object|null, transactions: Array, accountInfo: object, summary: object}>}
+ */
+export async function getComprehensiveWalletInfo(
+  walletAddress, 
+  specificTokenMint = null, 
+  transactionLimit = 20,
+  connection = defaultConnection
+) {
+  try {
+    const walletPublicKey = new PublicKey(walletAddress);
+    
+    console.log('?? Fetching comprehensive wallet info for:', walletAddress);
+    
+    // Batch ALL requests for maximum efficiency
+    const [
+      solBalanceData,
+      allTokens,
+      specificTokenData,
+      transactionsData,
+      accountInfoData,
+      mintInfoData
+    ] = await Promise.allSettled([
+      getSolBalance(walletAddress, connection),
+      getAllTokenBalances(walletAddress, connection),
+      specificTokenMint ? getTokenBalance(walletAddress, specificTokenMint, connection) : Promise.resolve(null),
+      getRecentTransactions(walletAddress, transactionLimit, connection),
+      connection.getAccountInfo(walletPublicKey, 'confirmed'),
+      specificTokenMint ? getTokenMintInfo(specificTokenMint, connection) : Promise.resolve(null)
+    ]);
+    
+    // Process account info
+    const accountInfo = accountInfoData.status === 'fulfilled' && accountInfoData.value ? {
+      exists: true,
+      owner: accountInfoData.value.owner?.toBase58() || null,
+      executable: accountInfoData.value.executable || false,
+      rentEpoch: accountInfoData.value.rentEpoch || null,
+      lamports: accountInfoData.value.lamports || 0,
+      dataLength: accountInfoData.value.data?.length || 0,
+    } : { exists: false };
+    
+    // Process transactions
+    const transactions = transactionsData.status === 'fulfilled' ? transactionsData.value : [];
+    
+    // Calculate wallet summary
+    const sol = solBalanceData.status === 'fulfilled' ? solBalanceData.value : { balance: 0 };
+    const tokens = allTokens.status === 'fulfilled' ? allTokens.value : [];
+    
+    // Calculate total token value (if we have price data)
+    const totalTokenAccounts = tokens.length;
+    const activeTokenAccounts = tokens.filter(t => parseFloat(t.balance) > 0).length;
+    
+    // Token account states summary
+    const tokenStates = {
+      initialized: tokens.filter(t => t.tokenAccount?.state === 'initialized').length,
+      frozen: tokens.filter(t => t.tokenAccount?.state === 'frozen').length,
+      closed: tokens.filter(t => t.tokenAccount?.state === 'closed').length,
+    };
+    
+    const summary = {
+      solBalance: sol.balance || 0,
+      totalTokens: totalTokenAccounts,
+      activeTokens: activeTokenAccounts,
+      totalTransactions: transactions.length,
+      accountExists: accountInfo.exists,
+      accountExecutable: accountInfo.executable,
+      tokenStates: tokenStates,
+      walletAge: transactions.length > 0 && transactions[transactions.length - 1]?.blockTime 
+        ? Math.floor((Date.now() / 1000 - transactions[transactions.length - 1].blockTime) / 86400)
+        : null,
+    };
+    
+    return {
+      sol: sol,
+      tokens: tokens,
+      specificToken: specificTokenData.status === 'fulfilled' && specificTokenData.value ? specificTokenData.value : null,
+      tokenMintInfo: mintInfoData.status === 'fulfilled' && mintInfoData.value ? mintInfoData.value : null,
+      transactions: transactions,
+      accountInfo: accountInfo,
+      summary: summary,
+      walletAddress: walletAddress,
+      timestamp: Date.now()
+    };
+  } catch (error) {
+    console.error('Error fetching comprehensive wallet info:', error);
+    throw error;
+  }
+}
+
+/**
  * Get token mint information
  * @param {string} tokenMint - Token mint address
  * @param {Connection} connection - Optional connection
@@ -249,24 +344,56 @@ export async function accountExists(address, connection = defaultConnection) {
 }
 
 /**
- * Get recent transaction signatures for a wallet
+ * Get recent transaction signatures for a wallet with detailed transaction data
  * @param {string} walletAddress - Public key as string
  * @param {number} limit - Number of signatures to fetch (default: 10)
  * @param {Connection} connection - Optional connection
- * @returns {Promise<Array<{signature: string, slot: number, blockTime: number}>>}
+ * @param {boolean} includeDetails - Whether to fetch full transaction details (slower but more info)
+ * @returns {Promise<Array<{signature: string, slot: number, blockTime: number, confirmationStatus: string, err: any, details?: object}>>}
  */
-export async function getRecentTransactions(walletAddress, limit = 10, connection = defaultConnection) {
+export async function getRecentTransactions(walletAddress, limit = 10, connection = defaultConnection, includeDetails = false) {
   try {
     const publicKey = new PublicKey(walletAddress);
     const signatures = await connection.getSignaturesForAddress(publicKey, { limit }, 'confirmed');
     
-    return signatures.map(sig => ({
+    let transactions = signatures.map(sig => ({
       signature: sig.signature,
       slot: sig.slot,
       blockTime: sig.blockTime,
       confirmationStatus: sig.confirmationStatus,
       err: sig.err || null,
+      timestamp: sig.blockTime ? new Date(sig.blockTime * 1000) : null,
     }));
+    
+    // Optionally fetch detailed transaction info (more expensive but provides full data)
+    if (includeDetails && transactions.length > 0) {
+      try {
+        const detailedTxs = await connection.getParsedTransactions(
+          transactions.map(tx => tx.signature),
+          { maxSupportedTransactionVersion: 0 }
+        );
+        
+        transactions = transactions.map((tx, idx) => ({
+          ...tx,
+          details: detailedTxs[idx] ? {
+            fee: detailedTxs[idx].meta?.fee || 0,
+            status: detailedTxs[idx].meta?.err ? 'failed' : 'success',
+            instructions: detailedTxs[idx].transaction?.message?.instructions?.length || 0,
+            accounts: detailedTxs[idx].transaction?.message?.accountKeys?.length || 0,
+            preBalances: detailedTxs[idx].meta?.preBalances || [],
+            postBalances: detailedTxs[idx].meta?.postBalances || [],
+            preTokenBalances: detailedTxs[idx].meta?.preTokenBalances || [],
+            postTokenBalances: detailedTxs[idx].meta?.postTokenBalances || [],
+            logMessages: detailedTxs[idx].meta?.logMessages || [],
+          } : null
+        }));
+      } catch (detailError) {
+        console.warn('Failed to fetch transaction details:', detailError);
+        // Continue without details
+      }
+    }
+    
+    return transactions;
   } catch (error) {
     console.error('Error fetching transactions:', error);
     throw error;

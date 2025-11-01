@@ -4,7 +4,7 @@ import { MessageCircle, Star, TrendingUp, Wallet, ExternalLink, X, Send, User, R
 import { useDevapp, fetchPumpFunTrends } from '@devfunlabs/web-sdk';
 import { Connection, PublicKey } from '@solana/web3.js';
 import { getPumpfunSocket } from '../utils/websocket';
-import { getWalletInfo, getTokenBalance as getTokenBalanceWeb3, getSolBalance } from '../utils/solanaWeb3';
+import { getWalletInfo, getComprehensiveWalletInfo, getTokenBalance as getTokenBalanceWeb3, getSolBalance } from '../utils/solanaWeb3';
 
 const connection = new Connection('https://rpc.dev.fun/a9a79a90906b540da651');
 
@@ -280,6 +280,8 @@ export default function TokenDetail({ tokenId, tokenAnalysis, creatorAddress, on
   const [copiedAddress, setCopiedAddress] = useState(false);
   const [videoPlayer, setVideoPlayer] = useState({ isOpen: false, clips: [], currentClip: 0 });
   const [marketActivity, setMarketActivity] = useState(null);
+  const [comprehensiveWalletData, setComprehensiveWalletData] = useState(null);
+  const [loadingComprehensiveData, setLoadingComprehensiveData] = useState(false);
   const messagesEndRef = useRef(null);
   
   let devbaseClient = null;
@@ -1072,7 +1074,7 @@ export default function TokenDetail({ tokenId, tokenAnalysis, creatorAddress, on
                 <div 
                   key={message.id} 
                   className="flex items-start gap-2 sm:gap-3 p-2 sm:p-3 bg-zinc-800/50 rounded-lg hover:bg-zinc-800/70 transition-colors cursor-pointer"
-                  onClick={() => {
+                  onClick={async () => {
                     if (message.userAddress) {
                       setSelectedUser({
                         username: message.username,
@@ -1082,6 +1084,22 @@ export default function TokenDetail({ tokenId, tokenAnalysis, creatorAddress, on
                         solBalance: parseFloat(message.solBalance) || 0,
                         tokenPercentage: parseFloat(message.tokenPercentage) || 0
                       });
+                      
+                      // Load comprehensive wallet data
+                      setLoadingComprehensiveData(true);
+                      try {
+                        const comprehensiveData = await getComprehensiveWalletInfo(
+                          message.userAddress, 
+                          tokenId, 
+                          20 // Fetch 20 recent transactions
+                        );
+                        setComprehensiveWalletData(comprehensiveData);
+                        console.log('📊 Comprehensive wallet data loaded:', comprehensiveData);
+                      } catch (error) {
+                        console.error('Failed to load comprehensive wallet data:', error);
+                      } finally {
+                        setLoadingComprehensiveData(false);
+                      }
                     }
                   }}
                 >
@@ -1158,11 +1176,17 @@ export default function TokenDetail({ tokenId, tokenAnalysis, creatorAddress, on
               <div className="flex items-center gap-1 sm:gap-2">
                 <button 
                   className="bg-green-500 hover:bg-green-600 text-white px-3 py-1 rounded-lg flex items-center gap-1 text-sm disabled:opacity-50"
-                  onClick={() => {
-                    // Refresh user data
+                  onClick={async () => {
+                    // Refresh user data - BOTH basic and comprehensive
                     if (selectedUser.userAddress) {
                       setLoadingBalances(prev => new Set([...prev, selectedUser.userAddress]));
-                      fetchWalletAssets(selectedUser.userAddress).then(walletData => {
+                      setLoadingComprehensiveData(true);
+                      
+                      // Fetch both basic and comprehensive data
+                      Promise.all([
+                        fetchWalletAssets(selectedUser.userAddress),
+                        getComprehensiveWalletInfo(selectedUser.userAddress, tokenId, 20)
+                      ]).then(([walletData, comprehensiveData]) => {
                         // Update selected user data
                         setSelectedUser(prev => ({
                           ...prev,
@@ -1170,6 +1194,9 @@ export default function TokenDetail({ tokenId, tokenAnalysis, creatorAddress, on
                           solBalance: parseFloat(walletData.solBalance) || 0,
                           tokenPercentage: parseFloat(walletData.tokenPercentage) || 0
                         }));
+                        
+                        // Update comprehensive data
+                        setComprehensiveWalletData(comprehensiveData);
                         
                         // Update all chat messages for this user
                         setMessages(prev => prev.map(msg => 
@@ -1194,19 +1221,22 @@ export default function TokenDetail({ tokenId, tokenAnalysis, creatorAddress, on
                             timestamp: walletData.timestamp
                           }
                         }));
+                      }).catch(error => {
+                        console.error('Error refreshing wallet data:', error);
                       }).finally(() => {
                         setLoadingBalances(prev => {
                           const newSet = new Set(prev);
                           newSet.delete(selectedUser.userAddress);
                           return newSet;
                         });
+                        setLoadingComprehensiveData(false);
                       });
                     }
                   }}
-                  disabled={loadingBalances.has(selectedUser?.userAddress)}
+                  disabled={loadingBalances.has(selectedUser?.userAddress) || loadingComprehensiveData}
                 >
-                  <RefreshCw className={`w-4 h-4 ${loadingBalances.has(selectedUser?.userAddress) ? 'animate-spin' : ''}`} />
-                  {loadingBalances.has(selectedUser?.userAddress) ? 'Loading...' : 'Refresh'}
+                  <RefreshCw className={`w-4 h-4 ${(loadingBalances.has(selectedUser?.userAddress) || loadingComprehensiveData) ? 'animate-spin' : ''}`} />
+                  {(loadingBalances.has(selectedUser?.userAddress) || loadingComprehensiveData) ? 'Loading...' : 'Refresh'}
                 </button>
                 <button
                   onClick={() => setSelectedUser(null)}
@@ -1283,7 +1313,7 @@ export default function TokenDetail({ tokenId, tokenAnalysis, creatorAddress, on
                 </div>
               </div>
 
-              {/* Right Column - Wallet Analysis */}
+              {/* Right Column - Wallet Analysis & Comprehensive Data */}
               <div className="space-y-4">
                 <div className="bg-zinc-800/50 p-4 rounded-lg">
                   <h4 className="text-lg font-semibold text-white mb-4">Wallet Analysis</h4>
@@ -1318,8 +1348,208 @@ export default function TokenDetail({ tokenId, tokenAnalysis, creatorAddress, on
                     </div>
                   </div>
                 </div>
+
+                {/* Comprehensive Wallet Data - Account State */}
+                {comprehensiveWalletData && comprehensiveWalletData.accountInfo && (
+                  <div className="bg-zinc-800/50 p-4 rounded-lg">
+                    <h4 className="text-lg font-semibold text-white mb-4">Account State</h4>
+                    <div className="space-y-2 text-sm">
+                      <div className="flex justify-between">
+                        <span className="text-gray-500">Account Status</span>
+                        <span className={comprehensiveWalletData.accountInfo.exists ? 'text-green-400 font-medium' : 'text-red-400 font-medium'}>
+                          {comprehensiveWalletData.accountInfo.exists ? 'Active' : 'Does Not Exist'}
+                        </span>
+                      </div>
+                      {comprehensiveWalletData.accountInfo.exists && (
+                        <>
+                          <div className="flex justify-between">
+                            <span className="text-gray-500">Executable</span>
+                            <span className={comprehensiveWalletData.accountInfo.executable ? 'text-yellow-400' : 'text-gray-400'}>
+                              {comprehensiveWalletData.accountInfo.executable ? 'Yes' : 'No'}
+                            </span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span className="text-gray-500">Lamports</span>
+                            <span className="text-blue-400 font-mono">
+                              {comprehensiveWalletData.accountInfo.lamports?.toLocaleString() || '0'}
+                            </span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span className="text-gray-500">Data Size</span>
+                            <span className="text-gray-400">
+                              {comprehensiveWalletData.accountInfo.dataLength || 0} bytes
+                            </span>
+                          </div>
+                          {comprehensiveWalletData.accountInfo.owner && (
+                            <div className="flex justify-between items-start">
+                              <span className="text-gray-500">Owner Program</span>
+                              <span className="text-purple-400 font-mono text-xs break-all text-right">
+                                {comprehensiveWalletData.accountInfo.owner}
+                              </span>
+                            </div>
+                          )}
+                        </>
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                {/* Wallet Summary */}
+                {comprehensiveWalletData && comprehensiveWalletData.summary && (
+                  <div className="bg-zinc-800/50 p-4 rounded-lg">
+                    <h4 className="text-lg font-semibold text-white mb-4">Wallet Summary</h4>
+                    <div className="space-y-2 text-sm">
+                      <div className="flex justify-between">
+                        <span className="text-gray-500">Total Tokens</span>
+                        <span className="text-cyan-400 font-medium">
+                          {comprehensiveWalletData.summary.totalTokens || 0}
+                        </span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-gray-500">Active Tokens</span>
+                        <span className="text-green-400 font-medium">
+                          {comprehensiveWalletData.summary.activeTokens || 0}
+                        </span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-gray-500">Total Transactions</span>
+                        <span className="text-yellow-400 font-medium">
+                          {comprehensiveWalletData.summary.totalTransactions || 0}
+                        </span>
+                      </div>
+                      {comprehensiveWalletData.summary.walletAge !== null && (
+                        <div className="flex justify-between">
+                          <span className="text-gray-500">Wallet Age</span>
+                          <span className="text-blue-400 font-medium">
+                            {comprehensiveWalletData.summary.walletAge} days
+                          </span>
+                        </div>
+                      )}
+                      {comprehensiveWalletData.summary.tokenStates && (
+                        <div className="mt-3 pt-3 border-t border-zinc-700">
+                          <div className="text-xs text-gray-500 mb-2">Token States:</div>
+                          <div className="grid grid-cols-3 gap-2 text-xs">
+                            <div>
+                              <span className="text-green-400">Init:</span> {comprehensiveWalletData.summary.tokenStates.initialized || 0}
+                            </div>
+                            <div>
+                              <span className="text-red-400">Frozen:</span> {comprehensiveWalletData.summary.tokenStates.frozen || 0}
+                            </div>
+                            <div>
+                              <span className="text-gray-400">Closed:</span> {comprehensiveWalletData.summary.tokenStates.closed || 0}
+                            </div>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                {/* Loading State */}
+                {loadingComprehensiveData && (
+                  <div className="bg-zinc-800/50 p-4 rounded-lg text-center">
+                    <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-purple-400 mx-auto mb-2"></div>
+                    <p className="text-gray-400 text-sm">Loading comprehensive wallet data...</p>
+                  </div>
+                )}
               </div>
             </div>
+
+            {/* Transaction History Section */}
+            {comprehensiveWalletData && comprehensiveWalletData.transactions && comprehensiveWalletData.transactions.length > 0 && (
+              <div className="mt-6">
+                <div className="bg-zinc-800/50 p-4 rounded-lg">
+                  <h4 className="text-lg font-semibold text-white mb-4">Recent Transactions ({comprehensiveWalletData.transactions.length})</h4>
+                  <div className="max-h-64 overflow-y-auto space-y-2">
+                    {comprehensiveWalletData.transactions.slice(0, 10).map((tx, idx) => (
+                      <div key={tx.signature || idx} className="bg-zinc-700/50 p-3 rounded-lg hover:bg-zinc-700/70 transition-colors">
+                        <div className="flex items-center justify-between mb-2">
+                          <div className="flex items-center gap-2">
+                            <span className={`text-xs px-2 py-1 rounded ${
+                              tx.err ? 'bg-red-500/20 text-red-400' : 'bg-green-500/20 text-green-400'
+                            }`}>
+                              {tx.err ? 'Failed' : 'Success'}
+                            </span>
+                            <span className="text-xs text-gray-500">
+                              {tx.timestamp ? tx.timestamp.toLocaleString() : tx.blockTime ? new Date(tx.blockTime * 1000).toLocaleString() : 'Unknown'}
+                            </span>
+                          </div>
+                          <a
+                            href={`https://solscan.io/tx/${tx.signature}`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-purple-400 hover:text-purple-300 text-xs flex items-center gap-1"
+                          >
+                            <ExternalLink className="w-3 h-3" />
+                            View
+                          </a>
+                        </div>
+                        <div className="text-xs text-gray-400 font-mono break-all">
+                          {tx.signature.slice(0, 32)}...
+                        </div>
+                        {tx.details && (
+                          <div className="mt-2 text-xs text-gray-500 space-y-1">
+                            <div>Fee: {(tx.details.fee / 1e9).toFixed(4)} SOL</div>
+                            <div>Instructions: {tx.details.instructions}</div>
+                            <div>Accounts: {tx.details.accounts}</div>
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* All Token Holdings Section */}
+            {comprehensiveWalletData && comprehensiveWalletData.tokens && comprehensiveWalletData.tokens.length > 0 && (
+              <div className="mt-6">
+                <div className="bg-zinc-800/50 p-4 rounded-lg">
+                  <h4 className="text-lg font-semibold text-white mb-4">All Token Holdings ({comprehensiveWalletData.tokens.length})</h4>
+                  <div className="max-h-64 overflow-y-auto space-y-2">
+                    {comprehensiveWalletData.tokens.slice(0, 20).map((token, idx) => (
+                      <div key={token.mint || idx} className="bg-zinc-700/50 p-3 rounded-lg hover:bg-zinc-700/70 transition-colors">
+                        <div className="flex items-center justify-between mb-2">
+                          <div className="flex items-center gap-2">
+                            <span className="text-white font-mono text-xs">
+                              {token.mint?.slice(0, 8)}...{token.mint?.slice(-8)}
+                            </span>
+                            {token.tokenAccount?.state && (
+                              <span className={`text-xs px-2 py-1 rounded ${
+                                token.tokenAccount.state === 'initialized' ? 'bg-green-500/20 text-green-400' :
+                                token.tokenAccount.state === 'frozen' ? 'bg-red-500/20 text-red-400' :
+                                'bg-gray-500/20 text-gray-400'
+                              }`}>
+                                {token.tokenAccount.state}
+                              </span>
+                            )}
+                          </div>
+                          <a
+                            href={`https://solscan.io/token/${token.mint}`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-purple-400 hover:text-purple-300 text-xs flex items-center gap-1"
+                          >
+                            <ExternalLink className="w-3 h-3" />
+                          </a>
+                        </div>
+                        <div className="flex justify-between items-center">
+                          <span className="text-cyan-400 font-medium">
+                            {parseFloat(token.balance || 0).toLocaleString(undefined, { maximumFractionDigits: 4 })}
+                          </span>
+                          <span className="text-xs text-gray-500">
+                            {token.decimals} decimals
+                          </span>
+                        </div>
+                        {token.tokenAccount?.isNative && (
+                          <div className="text-xs text-yellow-400 mt-1">⚠️ Native (Wrapped SOL)</div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            )}
 
             {/* Historical Messages Section */}
             <div className="mt-6">
