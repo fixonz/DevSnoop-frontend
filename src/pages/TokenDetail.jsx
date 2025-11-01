@@ -8,26 +8,6 @@ import { Connection, PublicKey } from '@solana/web3.js';
 
 const socket = io('wss://ws.dev.fun/app-a9a79a90906b540da651');
 
-// API functions - Now using Web3.js directly for transactions
-// This function kept for backward compatibility but uses direct RPC
-async function fetchHeliusTransactionsOnly(tokenMint, walletAddress) {
-  try {
-    // Use direct Helius API call (no proxy needed)
-    if (walletAddress) {
-      const directUrl = `https://api.helius.xyz/v0/addresses/${walletAddress}/transactions?api-key=10d64fda-22a9-4d18-9209-712683742a1d&type=SWAP&limit=100`;
-      const directResponse = await fetch(directUrl);
-      if (!directResponse.ok) return [];
-      const directData = await directResponse.json();
-      return Array.isArray(directData) ? directData : (directData.transactions || []);
-    }
-    
-    return [];
-  } catch (error) {
-    console.error('Helius transactions fetch failed:', error);
-    return [];
-  }
-}
-
 export default function TokenDetail() {
   const { mint } = useParams();
   const navigate = useNavigate();
@@ -73,6 +53,26 @@ export default function TokenDetail() {
 
   // Define all loader functions BEFORE useEffect (required for build)
   // Using useCallback to ensure functions are stable for useEffect dependencies
+  
+  // Helper function for fetching Helius transactions
+  const fetchHeliusTransactionsOnly = async (tokenMint, walletAddress) => {
+    try {
+      // Use direct Helius API call (no proxy needed)
+      if (walletAddress) {
+        const directUrl = `https://api.helius.xyz/v0/addresses/${walletAddress}/transactions?api-key=10d64fda-22a9-4d18-9209-712683742a1d&type=SWAP&limit=100`;
+        const directResponse = await fetch(directUrl);
+        if (!directResponse.ok) return [];
+        const directData = await directResponse.json();
+        return Array.isArray(directData) ? directData : (directData.transactions || []);
+      }
+      
+      return [];
+    } catch (error) {
+      console.error('Helius transactions fetch failed:', error);
+      return [];
+    }
+  };
+
   const loadRecentTransactions = useCallback(async () => {
     try {
       console.log('🔍 Loading recent transactions via Helius API...');
