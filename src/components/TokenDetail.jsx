@@ -181,6 +181,20 @@ const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
 async function getTokenBalance(walletAddress, tokenMint) {
   try {
+    // Try Helius API endpoint first
+    const heliusResponse = await fetch(`${import.meta.env.VITE_API_URL || 'https://chatscanfun.vercel.app'}/api/helius/balance?wallet=${walletAddress}&token=${tokenMint}&type=token`, {
+      method: 'GET',
+      headers: {
+        'Accept': 'application/json'
+      }
+    });
+    
+    if (heliusResponse.ok) {
+      const heliusData = await heliusResponse.json();
+      return heliusData.result?.balance || 0;
+    }
+    
+    // Fallback to direct RPC call
     let response = await fetch(HELIUS_RPC_URL, {
       method: 'POST',
       headers: {
@@ -226,7 +240,7 @@ async function getTokenBalance(walletAddress, tokenMint) {
     const balance = data.result?.value[0]?.account?.data?.parsed?.info?.tokenAmount?.uiAmount || 0;
     return balance;
   } catch (error) {
-    console.error('Helius balance check failed:', error);
+    console.error('Token balance check failed:', error);
     return 0;
   }
 }
@@ -680,24 +694,41 @@ export default function TokenDetail({ tokenId, tokenAnalysis, creatorAddress, on
       console.log(`⏳ Waiting ${delayTime}ms before API call...`);
       await delay(delayTime);
       
-      // Fetch SOL balance using SHYFT API proxy
-      const solResponse = await fetch(`${import.meta.env.VITE_API_URL}/api/shyft/balance?network=mainnet-beta&wallet=${walletAddress}`, {
-        method: 'GET',
-        headers: {
-          'Accept': 'application/json'
-        }
-      });
-      
+      // Fetch SOL balance using SHYFT API proxy (fallback to Helius)
       let solBalance = 0;
-      if (solResponse.ok) {
-        const solData = await solResponse.json();
-        solBalance = solData.result?.balance || 0;
-      } else {
-        console.log('⚠️ SHYFT SOL balance API failed:', solResponse.status);
+      try {
+        const solResponse = await fetch(`${import.meta.env.VITE_API_URL}/api/shyft/balance?network=mainnet-beta&wallet=${walletAddress}&type=wallet`, {
+          method: 'GET',
+          headers: {
+            'Accept': 'application/json'
+          }
+        });
+        
+        if (solResponse.ok) {
+          const solData = await solResponse.json();
+          solBalance = solData.result?.balance || 0;
+        } else {
+          console.log('⚠️ SHYFT SOL balance API failed, trying Helius fallback...');
+          // Fallback to Helius API
+          const heliusResponse = await fetch(`${import.meta.env.VITE_API_URL}/api/helius/balance?wallet=${walletAddress}&type=wallet`, {
+            method: 'GET',
+            headers: {
+              'Accept': 'application/json'
+            }
+          });
+          if (heliusResponse.ok) {
+            const heliusData = await heliusResponse.json();
+            solBalance = heliusData.result?.balance || 0;
+          } else {
+            console.log('⚠️ Helius SOL balance API also failed:', heliusResponse.status);
+          }
+        }
+      } catch (error) {
+        console.error('❌ Failed to fetch SOL balance:', error);
       }
       
-      // Fetch token balance using SHYFT API proxy
-      const tokenResponse = await fetch(`${import.meta.env.VITE_API_URL}/api/shyft/token-balance?network=mainnet-beta&wallet=${walletAddress}&token=${tokenId}`, {
+      // Fetch token balance using SHYFT API proxy (with correct endpoint)
+      const tokenResponse = await fetch(`${import.meta.env.VITE_API_URL}/api/shyft/balance?network=mainnet-beta&wallet=${walletAddress}&token=${tokenId}&type=token`, {
         method: 'GET',
         headers: {
           'Accept': 'application/json'
@@ -709,9 +740,27 @@ export default function TokenDetail({ tokenId, tokenAnalysis, creatorAddress, on
         const tokenData = await tokenResponse.json();
         tokenBalance = tokenData.result?.balance || 0;
       } else {
-        console.log('⚠️ SHYFT token balance API failed:', tokenResponse.status);
-        // Fallback to RPC method
-        tokenBalance = await getTokenBalance(walletAddress, tokenId);
+        console.log('⚠️ SHYFT token balance API failed, trying Helius fallback...');
+        // Fallback to Helius API
+        try {
+          const heliusResponse = await fetch(`${import.meta.env.VITE_API_URL}/api/helius/balance?wallet=${walletAddress}&token=${tokenId}&type=token`, {
+            method: 'GET',
+            headers: {
+              'Accept': 'application/json'
+            }
+          });
+          if (heliusResponse.ok) {
+            const heliusData = await heliusResponse.json();
+            tokenBalance = heliusData.result?.balance || 0;
+          } else {
+            // Final fallback to RPC method
+            tokenBalance = await getTokenBalance(walletAddress, tokenId);
+          }
+        } catch (heliusError) {
+          console.error('Helius fallback failed:', heliusError);
+          // Final fallback to RPC method
+          tokenBalance = await getTokenBalance(walletAddress, tokenId);
+        }
       }
       
       // All tokens have 1B supply, so calculate percentage directly
