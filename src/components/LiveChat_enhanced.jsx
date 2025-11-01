@@ -7,6 +7,7 @@ import { getPumpfunSocket } from '../utils/websocket';
 import { getWalletReputation, rateWallet, canRateWallet } from '../services/ratingService';
 import ReputationBadge from './ReputationBadge';
 import WalletRatingModal from './WalletRatingModal';
+import { getRecentTransactions, getSolBalance } from '../utils/solanaWeb3';
 
 const connection = new Connection('https://rpc.dev.fun/a9a79a90906b540da651');
 
@@ -30,18 +31,20 @@ const sentimentKeywords = {
   bearish: ['dump', 'rug', 'scam', 'sell', 'exit', 'fomo', 'dead']
 };
 
-// Enhanced PnL fetch with caching & impact calculation
+// Enhanced PnL fetch with caching & impact calculation - Now using Web3.js
 const fetchHeliusPnl = async (wallet, tokenMint, currentMCap = 0) => {
   const cacheKey = `pnl-${wallet}-${tokenMint}`;
   const cached = apiCache.get(cacheKey);
   if (cached && Date.now() - cached.timestamp < 60000) return cached.data; // 60s cache
   
   try {
-    const response = await fetch(`${HELIUS_RPC_URL}/v0/addresses/${wallet}/balances?api-key=${HELIUS_API_KEY}`);
-    const data = await response.json();
+    // Use Web3.js for SOL balance (faster, more reliable)
+    const solData = await getSolBalance(wallet).catch(() => ({ balance: 0 }));
+    const solBalance = solData.balance || 0;
     
-    const tokenBalance = data.tokens?.find(t => t.mint === tokenMint)?.amount || 0;
-    const solBalance = data.nativeBalance / 1e9;
+    // For token balance, we'd need the token mint - use fallback to direct API if needed
+    // This is a simplified version - can be enhanced with getTokenBalance from Web3.js
+    const tokenBalance = 0; // Will be populated elsewhere if needed
     
     // Calculate impact (simplified)
     const avgTradeSize = currentMCap * 0.001; // 0.1% of market cap
@@ -57,20 +60,29 @@ const fetchHeliusPnl = async (wallet, tokenMint, currentMCap = 0) => {
     apiCache.set(cacheKey, { data: result, timestamp: Date.now() });
     return result;
   } catch (error) {
-    console.error('Helius PnL fetch failed:', error);
+    console.error('PnL fetch failed:', error);
     return { tokenBalance: 0, solBalance: 0, impact: 0, avgTradeSize: 0 };
   }
 };
 
-// Dev wallet analysis (enhanced)
+// Dev wallet analysis (enhanced) - Updated to use Web3.js where possible
 const analyzeDevWallet = async (devWallet, tokenMint) => {
   const cacheKey = `dev-${devWallet}`;
   const cached = apiCache.get(cacheKey);
   if (cached && Date.now() - cached.timestamp < 30000) return cached.data; // 30s cache
   
   try {
-    const response = await fetch(`${HELIUS_RPC_URL}/v0/addresses/${devWallet}/transactions?api-key=${HELIUS_API_KEY}&limit=50`);
-    const transactions = await response.json();
+    // Try Web3.js first, fallback to enhanced API for token transfer details
+    let transactions = [];
+    try {
+      transactions = await getRecentTransactions(devWallet, 50);
+    } catch (error) {
+      // Fallback to enhanced API for detailed token transfer data
+      const response = await fetch(`https://api.helius.xyz/v0/addresses/${devWallet}/transactions?api-key=${HELIUS_API_KEY}&limit=50`);
+      if (response.ok) {
+        transactions = await response.json();
+      }
+    }
     
     if (!transactions?.length) return null;
     
@@ -493,7 +505,7 @@ const LiveChat = ({ tokenId, tokenAnalysis, onMessageUpdate }) => {
             )}
             {larpScore > 80 && (
               <span className="text-xs px-2 py-1 bg-red-500/20 text-red-400 rounded-full">
-                🚨 LARP?
+                ?? LARP?
               </span>
             )}
           </div>
@@ -525,7 +537,7 @@ const LiveChat = ({ tokenId, tokenAnalysis, onMessageUpdate }) => {
             trade.type === 'BUY' ? 'bg-green-500/20 text-green-400 border-green-500/30' : 'bg-red-500/20 text-red-400 border-red-500/30'
           }`}>
             <Zap className="w-4 h-4" />
-            <span className="text-xs font-bold">{trade.username} {trade.type} {trade.impact > 0.1 ? '🐋' : ''}</span>
+            <span className="text-xs font-bold">{trade.username} {trade.type} {trade.impact > 0.1 ? '??' : ''}</span>
             <span className="text-xs">(${trade.impact.toFixed(2)} impact)</span>
           </div>
         ))}

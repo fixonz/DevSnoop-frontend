@@ -7,6 +7,7 @@ import { getPumpfunSocket, getBackendSocket } from '../utils/websocket';
 import { getWalletReputation, rateWallet, canRateWallet } from '../services/ratingService';
 import ReputationBadge from './ReputationBadge';
 import WalletRatingModal from './WalletRatingModal';
+import { getRecentTransactions, getSolBalance, getAllTokenBalances } from '../utils/solanaWeb3';
 
 const connection = new Connection('https://rpc.dev.fun/a9a79a90906b540da651');
 
@@ -30,18 +31,23 @@ const sentimentKeywords = {
   bearish: ['dump', 'rug', 'scam', 'sell', 'exit', 'fomo', 'dead']
 };
 
-// Enhanced PnL fetch with caching & impact calculation
+// Enhanced PnL fetch with caching & impact calculation - Now using Web3.js
 const fetchHeliusPnl = async (wallet, tokenMint, currentMCap = 0) => {
   const cacheKey = `pnl-${wallet}-${tokenMint}`;
   const cached = apiCache.get(cacheKey);
   if (cached && Date.now() - cached.timestamp < 60000) return cached.data; // 60s cache
   
   try {
-    const response = await fetch(`${HELIUS_RPC_URL}/v0/addresses/${wallet}/balances?api-key=${HELIUS_API_KEY}`);
-    const data = await response.json();
+    // Use Web3.js utilities for balance queries (faster, more reliable)
+    const [solData, allTokens] = await Promise.allSettled([
+      getSolBalance(wallet),
+      getAllTokenBalances(wallet)
+    ]);
     
-    const tokenBalance = data.tokens?.find(t => t.mint === tokenMint)?.amount || 0;
-    const solBalance = data.nativeBalance / 1e9;
+    const solBalance = solData.status === 'fulfilled' ? (solData.value.balance || 0) : 0;
+    const tokenBalance = allTokens.status === 'fulfilled' 
+      ? (allTokens.value.find(t => t.mint === tokenMint)?.balance || 0)
+      : 0;
     
     // Calculate impact (simplified)
     const avgTradeSize = currentMCap * 0.001; // 0.1% of market cap
@@ -57,7 +63,7 @@ const fetchHeliusPnl = async (wallet, tokenMint, currentMCap = 0) => {
     apiCache.set(cacheKey, { data: result, timestamp: Date.now() });
     return result;
   } catch (error) {
-    console.error('Helius PnL fetch failed:', error);
+    console.error('PnL fetch failed:', error);
     return { tokenBalance: 0, solBalance: 0, impact: 0, avgTradeSize: 0 };
   }
 };
@@ -162,47 +168,67 @@ const analyzeWalletComprehensive = async (walletAddress, tokenMint = null) => {
   }
 };
 
-// Fetch Helius wallet data
+// Fetch Helius wallet data - Updated to use Web3.js + Enhanced API for analysis
 const fetchHeliusWalletData = async (walletAddress) => {
   try {
-    const response = await fetch(`${HELIUS_RPC_URL}/v0/addresses/${walletAddress}/transactions?limit=1000&api-key=${HELIUS_API_KEY}`);
-    if (!response.ok) throw new Error(`Helius API error: ${response.status}`);
+    // Use Web3.js for transaction signatures (faster)
+    const transactions = await getRecentTransactions(walletAddress, 100);
     
-    const transactions = await response.json();
+    // For enhanced analysis, still use Helius Enhanced API (has token transfer details)
+    let enhancedTransactions = [];
+    try {
+      const response = await fetch(`https://api.helius.xyz/v0/addresses/${walletAddress}/transactions?api-key=${HELIUS_API_KEY}&limit=100`);
+      if (response.ok) {
+        enhancedTransactions = await response.json();
+      }
+    } catch (error) {
+      console.warn('Enhanced transaction data unavailable, using Web3.js data only');
+    }
+    
+    const txsToAnalyze = enhancedTransactions.length > 0 ? enhancedTransactions : transactions;
     const now = Date.now() / 1000;
     
-    // Calculate wallet age
-    const oldestTx = Math.min(...transactions.map(tx => tx.timestamp));
-    const walletAge = Math.floor((now - oldestTx) / (24 * 60 * 60));
+    // Calculate wallet age from transactions
+    const timestamps = txsToAnalyze.map(tx => tx.blockTime || tx.timestamp || 0).filter(Boolean);
+    const walletAge = timestamps.length > 0 
+      ? Math.floor((now - Math.min(...timestamps)) / (24 * 60 * 60))
+      : 0;
     
-    // Analyze transaction patterns
-    const tokenTransfers = transactions.flatMap(tx => tx.tokenTransfers || []);
+    // Analyze transaction patterns from enhanced data
+    const tokenTransfers = enhancedTransactions.flatMap(tx => tx.tokenTransfers || []);
     const uniqueTokens = new Set(tokenTransfers.map(t => t.mint));
-    const uniqueWallets = new Set(transactions.flatMap(tx => [
+    const uniqueWallets = new Set(enhancedTransactions.flatMap(tx => [
       ...(tx.tokenTransfers || []).map(t => t.fromUserAccount).filter(Boolean),
       ...(tx.tokenTransfers || []).map(t => t.toUserAccount).filter(Boolean)
     ]));
     
     // Detect coordinated activity
-    const recentTxs = transactions.filter(tx => now - tx.timestamp < 24 * 60 * 60);
+    const recentTxs = txsToAnalyze.filter(tx => {
+      const txTime = tx.blockTime || tx.timestamp || 0;
+      return now - txTime < 24 * 60 * 60;
+    });
     const timeWindows = new Map();
     recentTxs.forEach(tx => {
-      const window = Math.floor(tx.timestamp / 300) * 300; // 5-min windows
+      const txTime = tx.blockTime || tx.timestamp || 0;
+      const window = Math.floor(txTime / 300) * 300; // 5-min windows
       timeWindows.set(window, (timeWindows.get(window) || 0) + 1);
     });
     const coordinatedBuys = Array.from(timeWindows.values()).filter(count => count > 3).length;
     
+    // Get SOL balance via Web3.js
+    const solData = await getSolBalance(walletAddress).catch(() => ({ balance: 0 }));
+    
     return {
       transactionCount: transactions.length,
       walletAge,
-      solBalance: 0, // Will be filled by Shyft
+      solBalance: solData.balance || 0,
       tokenHoldings: Array.from(uniqueTokens),
       multiWallet: uniqueWallets.size > 10,
       coordinatedBuys,
       suspiciousPatterns: coordinatedBuys > 5 || uniqueWallets.size > 20
     };
   } catch (error) {
-    console.error('Helius wallet fetch failed:', error);
+    console.error('Wallet data fetch failed:', error);
     return null;
   }
 };
