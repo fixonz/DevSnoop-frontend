@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import { ArrowLeft, ExternalLink, MessageCircle, TrendingUp, Star, Wallet, X } from 'lucide-react';
@@ -29,9 +29,12 @@ async function fetchHeliusTransactionsOnly(tokenMint, walletAddress) {
 }
 
 function TokenDetail() {
-  const { mint } = useParams(); // Changed from 'id' to 'mint' to match route
+  const { mint } = useParams();
   const navigate = useNavigate();
-  const { userWallet } = useDevapp();
+  
+  // Get userWallet from Devapp - hooks must be called unconditionally
+  const devappHook = useDevapp();
+  const userWallet = devappHook?.userWallet || null;
 
   const [token, setToken] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -67,6 +70,107 @@ function TokenDetail() {
   const [lastAutoRefresh, setLastAutoRefresh] = useState(null);
   const [autoRefreshCount, setAutoRefreshCount] = useState(0);
   const [liveTransactions, setLiveTransactions] = useState([]);
+
+  // Define all loader functions BEFORE useEffect (required for build)
+  // Using useCallback to ensure functions are stable for useEffect dependencies
+  const loadRecentTransactions = useCallback(async () => {
+    try {
+      console.log('🔍 Loading recent transactions via Helius API...');
+      const recentTxs = await fetchHeliusTransactionsOnly(mint, null);
+
+      const traders = {};
+      const fiveMinutesAgo = Date.now() - 5 * 60 * 1000;
+
+      recentTxs.forEach(tx => {
+        if (!tx.walletAddress || !tx.time) return;
+
+        const txTime = new Date(tx.time).getTime();
+        if (txTime < fiveMinutesAgo) return;
+
+        if (!traders[tx.walletAddress] || txTime > traders[tx.walletAddress].timestamp) {
+          traders[tx.walletAddress] = {
+            type: tx.type,
+            timestamp: txTime,
+            amount: tx.amount || 0
+          };
+        }
+      });
+
+      setRecentTraders(traders);
+      console.log(`✅ Updated recent traders: ${Object.keys(traders).length} active wallets (Helius-powered)`);
+    } catch (error) {
+      console.error('Failed to load recent transactions:', error);
+    }
+  }, [mint]);
+
+  const loadToken = useCallback(async () => {
+    try {
+      // Load token data from DexScreener or other sources
+      const response = await fetch(`https://api.dexscreener.com/latest/dex/tokens/${mint}`);
+      const data = await response.json();
+      
+      if (data.pairs && data.pairs.length > 0) {
+        const pair = data.pairs[0];
+        setToken({
+          id: mint,
+          symbol: pair.baseToken?.symbol || 'Unknown',
+          name: pair.baseToken?.name || 'Unknown Token',
+          price: parseFloat(pair.priceUsd) || 0,
+          priceChange24h: parseFloat(pair.priceChange?.h24) || 0,
+          volume24h: parseFloat(pair.volume?.h24) || 0,
+          marketCap: parseFloat(pair.marketCap) || 0,
+          totalHolders: parseInt(pair.holders) || 0,
+          image: pair.baseToken?.image || `https://api.dicebear.com/7.x/shapes/svg?seed=${pair.baseToken?.symbol}`,
+          liquidity: parseFloat(pair.liquidity?.usd) || 0
+        });
+      }
+      setLoading(false);
+    } catch (error) {
+      console.error('Failed to load token:', error);
+      setLoading(false);
+    }
+  }, [mint]);
+
+  const loadTokenSupply = useCallback(async () => {
+    // Implementation for loading token supply
+    setTokenSupply(1000000); // Placeholder
+  }, []);
+
+  const loadChatterRatings = useCallback(async () => {
+    // Implementation for loading chatter ratings
+  }, []);
+
+  const loadHolderBalances = useCallback(async () => {
+    // Implementation for loading holder balances
+  }, []);
+
+  const loadHistoricalMessages = useCallback(async () => {
+    try {
+      console.log('📚 Loading archived messages from Prisma API...');
+      const response = await fetch(`${import.meta.env.VITE_API_URL}/api/chat/messages/${mint}?limit=100`);
+      if (response.ok) {
+        const messages = await response.json();
+        console.log('📚 Loaded', messages.length, 'archived messages from Prisma API');
+        setChatMessages(messages.slice(-100));
+      } else {
+        console.warn('📚 Failed to load messages from API:', response.status);
+      }
+    } catch (error) {
+      console.error('📚 Failed to load historical messages:', error);
+    }
+  }, [mint]);
+
+  const loadFirstBuyers = useCallback(async () => {
+    // Implementation for loading first buyers
+  }, []);
+
+  const loadTopHolders = useCallback(async () => {
+    // Implementation for loading top holders
+  }, []);
+
+  const loadDevFundedWallets = useCallback(async () => {
+    // Implementation for loading dev funded wallets
+  }, []);
 
   useEffect(() => {
     setChatMessages([]);
@@ -148,106 +252,8 @@ function TokenDetail() {
       setIsChatConnected(false);
       console.log(`📡 Disconnected from PumpFun livestream for ${mint}`);
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mint]);
-
-  const loadRecentTransactions = async () => {
-    try {
-      console.log('🔍 Loading recent transactions via Helius API...');
-      const recentTxs = await fetchHeliusTransactionsOnly(mint, null);
-
-      const traders = {};
-      const fiveMinutesAgo = Date.now() - 5 * 60 * 1000;
-
-      recentTxs.forEach(tx => {
-        if (!tx.walletAddress || !tx.time) return;
-
-        const txTime = new Date(tx.time).getTime();
-        if (txTime < fiveMinutesAgo) return;
-
-        if (!traders[tx.walletAddress] || txTime > traders[tx.walletAddress].timestamp) {
-          traders[tx.walletAddress] = {
-            type: tx.type,
-            timestamp: txTime,
-            amount: tx.amount || 0
-          };
-        }
-      });
-
-      setRecentTraders(traders);
-      console.log(`✅ Updated recent traders: ${Object.keys(traders).length} active wallets (Helius-powered)`);
-    } catch (error) {
-      console.error('Failed to load recent transactions:', error);
-    }
-  };
-
-  const loadToken = async () => {
-    try {
-      // Load token data from DexScreener or other sources
-      const response = await fetch(`https://api.dexscreener.com/latest/dex/tokens/${mint}`);
-      const data = await response.json();
-      
-      if (data.pairs && data.pairs.length > 0) {
-        const pair = data.pairs[0];
-        setToken({
-          id: mint,
-          symbol: pair.baseToken?.symbol || 'Unknown',
-          name: pair.baseToken?.name || 'Unknown Token',
-          price: parseFloat(pair.priceUsd) || 0,
-          priceChange24h: parseFloat(pair.priceChange?.h24) || 0,
-          volume24h: parseFloat(pair.volume?.h24) || 0,
-          marketCap: parseFloat(pair.marketCap) || 0,
-          totalHolders: parseInt(pair.holders) || 0,
-          image: pair.baseToken?.image || `https://api.dicebear.com/7.x/shapes/svg?seed=${pair.baseToken?.symbol}`,
-          liquidity: parseFloat(pair.liquidity?.usd) || 0
-        });
-      }
-      setLoading(false);
-    } catch (error) {
-      console.error('Failed to load token:', error);
-      setLoading(false);
-    }
-  };
-
-  const loadTokenSupply = async () => {
-    // Implementation for loading token supply
-    setTokenSupply(1000000); // Placeholder
-  };
-
-  const loadChatterRatings = async () => {
-    // Implementation for loading chatter ratings
-  };
-
-  const loadHolderBalances = async () => {
-    // Implementation for loading holder balances
-  };
-
-  const loadHistoricalMessages = async () => {
-    try {
-      console.log('📚 Loading archived messages from Prisma API...');
-      const response = await fetch(`${import.meta.env.VITE_API_URL}/api/chat/messages/${mint}?limit=100`);
-      if (response.ok) {
-        const messages = await response.json();
-        console.log('📚 Loaded', messages.length, 'archived messages from Prisma API');
-        setChatMessages(messages.slice(-100));
-      } else {
-        console.warn('📚 Failed to load messages from API:', response.status);
-      }
-    } catch (error) {
-      console.error('📚 Failed to load historical messages:', error);
-    }
-  };
-
-  const loadFirstBuyers = async () => {
-    // Implementation for loading first buyers
-  };
-
-  const loadTopHolders = async () => {
-    // Implementation for loading top holders
-  };
-
-  const loadDevFundedWallets = async () => {
-    // Implementation for loading dev funded wallets
-  };
 
   if (loading) {
     return (
