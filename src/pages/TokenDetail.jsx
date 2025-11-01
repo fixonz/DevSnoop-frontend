@@ -45,7 +45,7 @@ async function fetchHeliusTransactionsOnly(tokenMint, walletAddress) {
 }
 
 function TokenDetail() {
-  const { id } = useParams();
+  const { mint } = useParams(); // Changed from 'id' to 'mint' to match route
   const navigate = useNavigate();
   const { userWallet } = useDevapp();
 
@@ -105,15 +105,15 @@ function TokenDetail() {
     loadDevFundedWallets();
     loadRecentTransactions();
 
-    const roomId = `pumpfun-${id}`;
+    const roomId = `pumpfun-${mint}`;
     socket.emit('join', roomId);
     setIsChatConnected(true);
-    console.log(`📡 Connected to PumpFun livestream for ${id}`);
+    console.log(`📡 Connected to PumpFun livestream for ${mint}`);
 
     const handleNewMessage = async message => {
       const messageTokenId = message.roomId?.replace('pumpfun-', '') || '';
 
-      if (messageTokenId !== id) {
+      if (messageTokenId !== mint) {
         console.log('Ignoring message from different token:', messageTokenId);
         return;
       }
@@ -127,7 +127,7 @@ function TokenDetail() {
           },
           body: JSON.stringify({
             ...message,
-            tokenId: id
+            tokenId: mint
           })
         });
         
@@ -162,14 +162,14 @@ function TokenDetail() {
       socket.emit('leave', roomId);
       socket.off('pumpfun:newMessage', handleNewMessage);
       setIsChatConnected(false);
-      console.log(`📡 Disconnected from PumpFun livestream for ${id}`);
+      console.log(`📡 Disconnected from PumpFun livestream for ${mint}`);
     };
-  }, [id]);
+  }, [mint]);
 
   const loadRecentTransactions = async () => {
     try {
       console.log('🔍 Loading recent transactions via Helius API...');
-      const recentTxs = await fetchHeliusTransactionsOnly(id, null);
+      const recentTxs = await fetchHeliusTransactionsOnly(mint, null);
 
       const traders = {};
       const fiveMinutesAgo = Date.now() - 5 * 60 * 1000;
@@ -199,13 +199,13 @@ function TokenDetail() {
   const loadToken = async () => {
     try {
       // Load token data from DexScreener or other sources
-      const response = await fetch(`https://api.dexscreener.com/latest/dex/tokens/${id}`);
+      const response = await fetch(`https://api.dexscreener.com/latest/dex/tokens/${mint}`);
       const data = await response.json();
       
       if (data.pairs && data.pairs.length > 0) {
         const pair = data.pairs[0];
         setToken({
-          id,
+          id: mint,
           symbol: pair.baseToken?.symbol || 'Unknown',
           name: pair.baseToken?.name || 'Unknown Token',
           price: parseFloat(pair.priceUsd) || 0,
@@ -240,7 +240,7 @@ function TokenDetail() {
   const loadHistoricalMessages = async () => {
     try {
       console.log('📚 Loading archived messages from Prisma API...');
-      const response = await fetch(`${import.meta.env.VITE_API_URL}/api/chat/messages/${id}?limit=100`);
+      const response = await fetch(`${import.meta.env.VITE_API_URL}/api/chat/messages/${mint}?limit=100`);
       if (response.ok) {
         const messages = await response.json();
         console.log('📚 Loaded', messages.length, 'archived messages from Prisma API');
@@ -264,17 +264,6 @@ function TokenDetail() {
   const loadDevFundedWallets = async () => {
     // Implementation for loading dev funded wallets
   };
-
-  if (loading) {
-    return (
-      <div className="min-h-screen bg-gray-900 text-white flex items-center justify-center">
-        <div className="text-center">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-[#00D4AA] mx-auto mb-4"></div>
-          <p className="text-gray-400">Loading token details...</p>
-        </div>
-      </div>
-    );
-  }
 
   if (loading) {
     return (
