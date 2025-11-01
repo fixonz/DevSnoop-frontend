@@ -28,7 +28,7 @@ async function fetchHeliusTransactionsOnly(tokenMint, walletAddress) {
   }
 }
 
-function TokenDetail() {
+export default function TokenDetail() {
   const { mint } = useParams();
   const navigate = useNavigate();
   
@@ -405,5 +405,3 @@ function TokenDetail() {
     </div>
   );
 }
-
-export default TokenDetail;
