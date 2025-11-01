@@ -744,77 +744,19 @@ export default function TokenDetail({ tokenId, tokenAnalysis, creatorAddress, on
           }
         }
       } catch (web3Error) {
-        console.warn('⚠️ Web3.js failed, falling back to API proxies:', web3Error.message);
+        console.warn('⚠️ Web3.js failed, using direct RPC fallback:', web3Error.message);
         
-        // FALLBACK 1: Try SHYFT API
+        // FALLBACK: Direct RPC method (no API proxy needed - Web3.js handles it)
         try {
-          // Fetch SOL balance
-          const solResponse = await fetch(`${import.meta.env.VITE_API_URL}/api/shyft/balance?network=mainnet-beta&wallet=${walletAddress}`, {
-            method: 'GET',
-            headers: {
-              'Accept': 'application/json'
-            }
-          });
-          
-          if (solResponse.ok) {
-            const solData = await solResponse.json();
-            solBalance = solData.result?.balance || solData.balance || 0;
-          } else {
-            // FALLBACK 2: Try Helius API
-            const heliusSolResponse = await fetch(`${import.meta.env.VITE_API_URL}/api/helius/balance?wallet=${walletAddress}`, {
-              method: 'GET',
-              headers: {
-                'Accept': 'application/json'
-              }
-            });
-            
-            if (heliusSolResponse.ok) {
-              const heliusSolData = await heliusSolResponse.json();
-              solBalance = heliusSolData.result?.balance || 0;
-            }
-          }
-          
-          // Fetch token balance
-          const tokenResponse = await fetch(`${import.meta.env.VITE_API_URL}/api/shyft/balance?network=mainnet-beta&wallet=${walletAddress}&token=${tokenId}`, {
-            method: 'GET',
-            headers: {
-              'Accept': 'application/json'
-            }
-          });
-          
-          if (tokenResponse.ok) {
-            const tokenData = await tokenResponse.json();
-            tokenBalance = parseFloat(tokenData.result?.balance || tokenData.balance || 0);
-          } else {
-            // FALLBACK 2: Try Helius API
-            const heliusTokenResponse = await fetch(`${import.meta.env.VITE_API_URL}/api/helius/balance?wallet=${walletAddress}&token=${tokenId}`, {
-              method: 'GET',
-              headers: {
-                'Accept': 'application/json'
-              }
-            });
-            
-            if (heliusTokenResponse.ok) {
-              const heliusTokenData = await heliusTokenResponse.json();
-              tokenBalance = parseFloat(heliusTokenData.result?.balance || 0);
-            } else {
-              // FALLBACK 3: Direct RPC method
-              tokenBalance = await getTokenBalance(walletAddress, tokenId);
-            }
-          }
-        } catch (apiError) {
-          console.error('❌ API fallback failed, using direct RPC:', apiError);
-          // Last resort: Direct RPC
-          tokenBalance = await getTokenBalance(walletAddress, tokenId);
-          
           // Try to get SOL balance via Web3.js directly
-          try {
-            const solData = await getSolBalance(walletAddress);
-            solBalance = parseFloat(solData.balance || 0);
-          } catch (solError) {
-            console.error('Failed to fetch SOL balance:', solError);
-          }
+          const solData = await getSolBalance(walletAddress);
+          solBalance = parseFloat(solData.balance || 0);
+        } catch (solError) {
+          console.error('Failed to fetch SOL balance:', solError);
         }
+        
+        // Try direct RPC for token balance
+        tokenBalance = await getTokenBalance(walletAddress, tokenId);
       }
       
       // All tokens have 1B supply, so calculate percentage directly
