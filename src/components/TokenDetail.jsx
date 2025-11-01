@@ -181,7 +181,24 @@ const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
 async function getTokenBalance(walletAddress, tokenMint) {
   try {
-    let response = await fetch(HELIUS_RPC_URL, {
+    // Try using Helius API endpoint first
+    try {
+      const heliusResponse = await fetch(`${import.meta.env.VITE_API_URL || 'https://chatscanfun.vercel.app'}/api/helius/wallet?address=${walletAddress}&type=balances`);
+      if (heliusResponse.ok) {
+        const heliusData = await heliusResponse.json();
+        // Find the token balance in the response
+        const tokenBalance = heliusData.tokens?.find(t => t.mint === tokenMint)?.amount || 0;
+        if (tokenBalance > 0) {
+          return tokenBalance;
+        }
+      }
+    } catch (heliusError) {
+      console.log('Helius API endpoint not available, trying RPC...');
+    }
+    
+    // Fallback to RPC method with correct URL format
+    const correctHeliusRpcUrl = `https://rpc.helius.xyz/?api-key=${HELIUS_API_KEY}`;
+    let response = await fetch(correctHeliusRpcUrl, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json'
@@ -226,7 +243,7 @@ async function getTokenBalance(walletAddress, tokenMint) {
     const balance = data.result?.value[0]?.account?.data?.parsed?.info?.tokenAmount?.uiAmount || 0;
     return balance;
   } catch (error) {
-    console.error('Helius balance check failed:', error);
+    console.error('Token balance check failed:', error);
     return 0;
   }
 }
@@ -235,6 +252,35 @@ export default function TokenDetail({ tokenId, tokenAnalysis, creatorAddress, on
   // Use passed tokenAnalysis if available, otherwise fetch data
   const [localTokenData, setLocalTokenData] = useState(null);
   const [isLoadingData, setIsLoadingData] = useState(!tokenAnalysis);
+  
+  // Fetch token data on mount if not provided
+  useEffect(() => {
+    const fetchTokenData = async () => {
+      if (tokenAnalysis) {
+        setIsLoadingData(false);
+        return;
+      }
+      
+      setIsLoadingData(true);
+      try {
+        console.log('🔍 Fetching token data for:', tokenId);
+        const response = await fetch(`${import.meta.env.VITE_API_URL || 'https://chatscanfun.vercel.app'}/api/tokens/${tokenId}`);
+        if (response.ok) {
+          const data = await response.json();
+          console.log('✅ Token data fetched:', data);
+          setLocalTokenData(data);
+        } else {
+          console.warn('Failed to fetch token data:', response.status);
+        }
+      } catch (error) {
+        console.error('Error fetching token data:', error);
+      } finally {
+        setIsLoadingData(false);
+      }
+    };
+    
+    fetchTokenData();
+  }, [tokenId, tokenAnalysis]);
   
   // Use tokenAnalysis if provided, otherwise use local data
   const currentTokenData = tokenAnalysis || localTokenData;
@@ -697,20 +743,26 @@ export default function TokenDetail({ tokenId, tokenAnalysis, creatorAddress, on
       }
       
       // Fetch token balance using SHYFT API proxy
-      const tokenResponse = await fetch(`${import.meta.env.VITE_API_URL}/api/shyft/token-balance?network=mainnet-beta&wallet=${walletAddress}&token=${tokenId}`, {
-        method: 'GET',
-        headers: {
-          'Accept': 'application/json'
-        }
-      });
-      
       let tokenBalance = 0;
-      if (tokenResponse.ok) {
-        const tokenData = await tokenResponse.json();
-        tokenBalance = tokenData.result?.balance || 0;
-      } else {
-        console.log('⚠️ SHYFT token balance API failed:', tokenResponse.status);
-        // Fallback to RPC method
+      try {
+        const tokenResponse = await fetch(`${import.meta.env.VITE_API_URL}/api/shyft/balance?network=mainnet-beta&wallet=${walletAddress}&token=${tokenId}&type=token`, {
+          method: 'GET',
+          headers: {
+            'Accept': 'application/json'
+          }
+        });
+        
+        if (tokenResponse.ok) {
+          const tokenData = await tokenResponse.json();
+          tokenBalance = tokenData.result?.balance || 0;
+        } else {
+          console.log('⚠️ SHYFT token balance API failed:', tokenResponse.status);
+          // Fallback to Helius RPC method
+          tokenBalance = await getTokenBalance(walletAddress, tokenId);
+        }
+      } catch (tokenError) {
+        console.log('⚠️ Token balance fetch failed, trying fallback:', tokenError);
+        // Final fallback to RPC method
         tokenBalance = await getTokenBalance(walletAddress, tokenId);
       }
       
@@ -800,8 +852,11 @@ export default function TokenDetail({ tokenId, tokenAnalysis, creatorAddress, on
             {/* Top section with token info and LIVE status */}
             <div className="flex justify-between items-start">
               <div>
-                <h1 className="text-3xl sm:text-4xl font-bold text-white mb-2">{currentTokenData?.symbol || 'Loading...'}</h1>
+                <h1 className="text-3xl sm:text-4xl font-bold text-white mb-2">{currentTokenData?.symbol || tokenId?.slice(0, 8) || 'Loading...'}</h1>
                 <p className="text-gray-300 text-lg">{currentTokenData?.name || 'Unknown Token'}</p>
+                {tokenId && (
+                  <p className="text-gray-400 text-xs mt-1 font-mono truncate max-w-xs">{tokenId}</p>
+                )}
               </div>
               
               <div className="flex items-center gap-3">
@@ -834,7 +889,11 @@ export default function TokenDetail({ tokenId, tokenAnalysis, creatorAddress, on
             <div className="text-center">
               <div className="text-gray-300 text-sm sm:text-base mb-2">Market Cap</div>
               <div className="text-white font-bold text-4xl sm:text-6xl mb-2 drop-shadow-lg">
-                ${currentTokenData?.marketCap ? formatBalance(currentTokenData.marketCap) : '0'}
+                ${(() => {
+                  if (currentTokenData?.marketCap) return formatBalance(currentTokenData.marketCap);
+                  if (currentTokenData?.price) return formatBalance(currentTokenData.price * 1000000000);
+                  return '0';
+                })()}
               </div>
               <div className="text-gray-400 text-xs sm:text-sm">Fully Diluted Valuation</div>
             </div>

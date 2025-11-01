@@ -11,15 +11,30 @@ const socket = io('wss://ws.dev.fun/app-a9a79a90906b540da651');
 // API functions
 async function fetchHeliusTransactionsOnly(tokenMint, walletAddress) {
   try {
-    const url = walletAddress 
-      ? `https://mainnet.helius-rpc.com/?api-key=10d64fda-22a9-4d18-9209-712683742a1d/v0/addresses/${walletAddress}/transactions?type=SWAP`
-      : `https://mainnet.helius-rpc.com/?api-key=10d64fda-22a9-4d18-9209-712683742a1d/v0/token-metadata?mintAddresses=${tokenMint}`;
+    const HELIUS_API_KEY = '10d64fda-22a9-4d18-9209-712683742a1d';
+    const API_URL = import.meta.env.VITE_API_URL || 'https://chatscanfun.vercel.app';
     
-    const response = await fetch(url);
-    if (!response.ok) return [];
+    if (walletAddress) {
+      // Fetch wallet transactions via API endpoint
+      const response = await fetch(`${API_URL}/api/helius/wallet?address=${walletAddress}&type=transactions`);
+      if (response.ok) {
+        const data = await response.json();
+        // Filter for token transfers related to this mint
+        const filtered = Array.isArray(data) ? data.filter(tx => 
+          tx.tokenTransfers?.some(transfer => transfer.mint === tokenMint)
+        ) : [];
+        return filtered;
+      }
+    } else {
+      // Fetch token transfers for the mint
+      const response = await fetch(`${API_URL}/api/helius/token-transfers?mint=${tokenMint}`);
+      if (response.ok) {
+        const data = await response.json();
+        return Array.isArray(data) ? data : [];
+      }
+    }
     
-    const data = await response.json();
-    return data || [];
+    return [];
   } catch (error) {
     console.error('Helius transactions fetch failed:', error);
     return [];
