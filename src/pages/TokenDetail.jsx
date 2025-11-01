@@ -11,15 +11,33 @@ const socket = io('wss://ws.dev.fun/app-a9a79a90906b540da651');
 // API functions
 async function fetchHeliusTransactionsOnly(tokenMint, walletAddress) {
   try {
-    const url = walletAddress 
-      ? `https://mainnet.helius-rpc.com/?api-key=10d64fda-22a9-4d18-9209-712683742a1d/v0/addresses/${walletAddress}/transactions?type=SWAP`
-      : `https://mainnet.helius-rpc.com/?api-key=10d64fda-22a9-4d18-9209-712683742a1d/v0/token-metadata?mintAddresses=${tokenMint}`;
+    const apiUrl = import.meta.env.VITE_API_URL || 'https://chatscanfun.vercel.app';
     
-    const response = await fetch(url);
-    if (!response.ok) return [];
+    if (walletAddress) {
+      // Use the Helius transactions API endpoint
+      const response = await fetch(`${apiUrl}/api/helius/transactions?wallet=${walletAddress}&type=SWAP&limit=100`);
+      if (!response.ok) {
+        console.warn('Helius transactions API failed, trying direct call');
+        // Fallback to direct API call
+        const directUrl = `https://api.helius.xyz/v0/addresses/${walletAddress}/transactions?api-key=10d64fda-22a9-4d18-9209-712683742a1d&type=SWAP&limit=100`;
+        const directResponse = await fetch(directUrl);
+        if (!directResponse.ok) return [];
+        const directData = await directResponse.json();
+        return Array.isArray(directData) ? directData : (directData.transactions || []);
+      }
+      
+      const data = await response.json();
+      return Array.isArray(data.result) ? data.result : (data.result?.transactions || []);
+    } else if (tokenMint) {
+      // Fetch token metadata or use transactions API
+      const response = await fetch(`${apiUrl}/api/helius/transactions?mint=${tokenMint}`);
+      if (!response.ok) return [];
+      
+      const data = await response.json();
+      return data.result ? [data.result] : [];
+    }
     
-    const data = await response.json();
-    return data || [];
+    return [];
   } catch (error) {
     console.error('Helius transactions fetch failed:', error);
     return [];

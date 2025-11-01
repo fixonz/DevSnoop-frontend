@@ -181,6 +181,7 @@ const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
 async function getTokenBalance(walletAddress, tokenMint) {
   try {
+    // First try Helius RPC
     let response = await fetch(HELIUS_RPC_URL, {
       method: 'POST',
       headers: {
@@ -198,8 +199,14 @@ async function getTokenBalance(walletAddress, tokenMint) {
       })
     });
     
-    if (!response.ok && response.status === 429) {
-      console.log('⚠️ Helius rate limited, trying SHYFT...');
+    if (!response.ok) {
+      if (response.status === 429) {
+        console.log('⚠️ Helius rate limited, trying SHYFT RPC...');
+      } else {
+        console.log('⚠️ Helius RPC failed, trying SHYFT RPC...');
+      }
+      
+      // Fallback to SHYFT RPC
       response = await fetch(SHYFT_RPC_URL, {
         method: 'POST',
         headers: {
@@ -218,15 +225,26 @@ async function getTokenBalance(walletAddress, tokenMint) {
       });
     }
     
-    const data = await response.json();
-    if (data.result?.value?.length === 0) {
+    if (!response.ok) {
+      console.error('RPC balance check failed:', response.status, response.statusText);
       return 0;
     }
     
-    const balance = data.result?.value[0]?.account?.data?.parsed?.info?.tokenAmount?.uiAmount || 0;
-    return balance;
+    const data = await response.json();
+    
+    if (data.error) {
+      console.error('RPC error:', data.error);
+      return 0;
+    }
+    
+    if (!data.result?.value || data.result.value.length === 0) {
+      return 0;
+    }
+    
+    const balance = data.result.value[0]?.account?.data?.parsed?.info?.tokenAmount?.uiAmount || 0;
+    return parseFloat(balance) || 0;
   } catch (error) {
-    console.error('Helius balance check failed:', error);
+    console.error('Token balance check failed:', error);
     return 0;
   }
 }
@@ -680,37 +698,73 @@ export default function TokenDetail({ tokenId, tokenAnalysis, creatorAddress, on
       console.log(`⏳ Waiting ${delayTime}ms before API call...`);
       await delay(delayTime);
       
-      // Fetch SOL balance using SHYFT API proxy
-      const solResponse = await fetch(`${import.meta.env.VITE_API_URL}/api/shyft/balance?network=mainnet-beta&wallet=${walletAddress}`, {
-        method: 'GET',
-        headers: {
-          'Accept': 'application/json'
-        }
-      });
-      
+      // Fetch SOL balance using SHYFT API proxy with Helius fallback
       let solBalance = 0;
-      if (solResponse.ok) {
-        const solData = await solResponse.json();
-        solBalance = solData.result?.balance || 0;
-      } else {
-        console.log('⚠️ SHYFT SOL balance API failed:', solResponse.status);
+      try {
+        const solResponse = await fetch(`${import.meta.env.VITE_API_URL}/api/shyft/balance?network=mainnet-beta&wallet=${walletAddress}`, {
+          method: 'GET',
+          headers: {
+            'Accept': 'application/json'
+          }
+        });
+        
+        if (solResponse.ok) {
+          const solData = await solResponse.json();
+          solBalance = solData.result?.balance || solData.balance || 0;
+        } else {
+          console.log('⚠️ SHYFT SOL balance API failed, trying Helius...');
+          // Fallback to Helius
+          const heliusSolResponse = await fetch(`${import.meta.env.VITE_API_URL}/api/helius/balance?wallet=${walletAddress}`, {
+            method: 'GET',
+            headers: {
+              'Accept': 'application/json'
+            }
+          });
+          
+          if (heliusSolResponse.ok) {
+            const heliusSolData = await heliusSolResponse.json();
+            solBalance = heliusSolData.result?.balance || 0;
+          }
+        }
+      } catch (error) {
+        console.error('Failed to fetch SOL balance:', error);
       }
       
-      // Fetch token balance using SHYFT API proxy
-      const tokenResponse = await fetch(`${import.meta.env.VITE_API_URL}/api/shyft/token-balance?network=mainnet-beta&wallet=${walletAddress}&token=${tokenId}`, {
-        method: 'GET',
-        headers: {
-          'Accept': 'application/json'
-        }
-      });
-      
+      // Fetch token balance using SHYFT API proxy with Helius fallback
       let tokenBalance = 0;
-      if (tokenResponse.ok) {
-        const tokenData = await tokenResponse.json();
-        tokenBalance = tokenData.result?.balance || 0;
-      } else {
-        console.log('⚠️ SHYFT token balance API failed:', tokenResponse.status);
-        // Fallback to RPC method
+      try {
+        const tokenResponse = await fetch(`${import.meta.env.VITE_API_URL}/api/shyft/balance?network=mainnet-beta&wallet=${walletAddress}&token=${tokenId}`, {
+          method: 'GET',
+          headers: {
+            'Accept': 'application/json'
+          }
+        });
+        
+        if (tokenResponse.ok) {
+          const tokenData = await tokenResponse.json();
+          tokenBalance = parseFloat(tokenData.result?.balance || tokenData.balance || 0);
+        } else {
+          console.log('⚠️ SHYFT token balance API failed, trying Helius...');
+          // Fallback to Helius
+          const heliusTokenResponse = await fetch(`${import.meta.env.VITE_API_URL}/api/helius/balance?wallet=${walletAddress}&token=${tokenId}`, {
+            method: 'GET',
+            headers: {
+              'Accept': 'application/json'
+            }
+          });
+          
+          if (heliusTokenResponse.ok) {
+            const heliusTokenData = await heliusTokenResponse.json();
+            tokenBalance = parseFloat(heliusTokenData.result?.balance || 0);
+          } else {
+            // Last fallback to direct RPC method
+            console.log('⚠️ Helius token balance API failed, trying direct RPC...');
+            tokenBalance = await getTokenBalance(walletAddress, tokenId);
+          }
+        }
+      } catch (error) {
+        console.error('Failed to fetch token balance, trying RPC fallback:', error);
+        // Last fallback to direct RPC method
         tokenBalance = await getTokenBalance(walletAddress, tokenId);
       }
       
