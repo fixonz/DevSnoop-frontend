@@ -8,21 +8,49 @@ import { Connection, PublicKey } from '@solana/web3.js';
 
 const socket = io('wss://ws.dev.fun/app-a9a79a90906b540da651');
 
-// API functions
-async function fetchHeliusTransactionsOnly(tokenMint, walletAddress) {
+// API functions - use API endpoints instead of direct Helius calls
+async function fetchHeliusTransactions(tokenMint, walletAddress) {
   try {
-    const url = walletAddress 
-      ? `https://mainnet.helius-rpc.com/?api-key=10d64fda-22a9-4d18-9209-712683742a1d/v0/addresses/${walletAddress}/transactions?type=SWAP`
-      : `https://mainnet.helius-rpc.com/?api-key=10d64fda-22a9-4d18-9209-712683742a1d/v0/token-metadata?mintAddresses=${tokenMint}`;
+    const apiUrl = import.meta.env.VITE_API_URL || 'https://chatscanfun.vercel.app';
     
-    const response = await fetch(url);
-    if (!response.ok) return [];
-    
-    const data = await response.json();
-    return data || [];
+    if (walletAddress) {
+      // Fetch transactions for a specific wallet
+      const response = await fetch(
+        `${apiUrl}/api/helius/transactions?wallet=${walletAddress}&type=SWAP&limit=100`
+      );
+      if (!response.ok) return [];
+      const data = await response.json();
+      return Array.isArray(data) ? data : [];
+    } else {
+      // Fetch token metadata and recent transactions
+      const response = await fetch(
+        `${apiUrl}/api/helius/transactions?mint=${tokenMint}&limit=100`
+      );
+      if (!response.ok) return [];
+      const data = await response.json();
+      return Array.isArray(data) ? data : [];
+    }
   } catch (error) {
     console.error('Helius transactions fetch failed:', error);
     return [];
+  }
+}
+
+async function fetchHeliusBalance(walletAddress, tokenMint) {
+  try {
+    const apiUrl = import.meta.env.VITE_API_URL || 'https://chatscanfun.vercel.app';
+    const url = tokenMint
+      ? `${apiUrl}/api/helius/balance?wallet=${walletAddress}&mint=${tokenMint}`
+      : `${apiUrl}/api/helius/balance?wallet=${walletAddress}`;
+    
+    const response = await fetch(url);
+    if (!response.ok) return null;
+    
+    const data = await response.json();
+    return data;
+  } catch (error) {
+    console.error('Helius balance fetch failed:', error);
+    return null;
   }
 }
 
@@ -151,23 +179,49 @@ function TokenDetail() {
   const loadRecentTransactions = async () => {
     try {
       console.log('🔍 Loading recent transactions via Helius API...');
-      const recentTxs = await fetchHeliusTransactionsOnly(id, null);
+      const recentTxs = await fetchHeliusTransactions(id, null);
 
       const traders = {};
       const fiveMinutesAgo = Date.now() - 5 * 60 * 1000;
 
+      // Process Helius transaction data
       recentTxs.forEach(tx => {
-        if (!tx.walletAddress || !tx.time) return;
+        // Handle different transaction formats from Helius
+        const tokenTransfers = tx.tokenTransfers || [];
+        const timestamp = tx.timestamp ? tx.timestamp * 1000 : (tx.blockTime ? tx.blockTime * 1000 : Date.now());
+        
+        if (timestamp < fiveMinutesAgo) return;
 
-        const txTime = new Date(tx.time).getTime();
-        if (txTime < fiveMinutesAgo) return;
+        // Extract wallet addresses from token transfers
+        tokenTransfers.forEach(transfer => {
+          const wallet = transfer.fromUserAccount === '11111111111111111111111111111111' 
+            ? transfer.toUserAccount 
+            : transfer.fromUserAccount;
+          
+          if (wallet && wallet !== '11111111111111111111111111111111') {
+            if (!traders[wallet] || timestamp > traders[wallet].timestamp) {
+              traders[wallet] = {
+                type: tx.type || 'SWAP',
+                timestamp: timestamp,
+                amount: transfer.tokenAmount || 0,
+                mint: transfer.mint
+              };
+            }
+          }
+        });
 
-        if (!traders[tx.walletAddress] || txTime > traders[tx.walletAddress].timestamp) {
-          traders[tx.walletAddress] = {
-            type: tx.type,
-            timestamp: txTime,
-            amount: tx.amount || 0
-          };
+        // Also check native transfers
+        if (tx.nativeTransfers && tx.nativeTransfers.length > 0) {
+          tx.nativeTransfers.forEach(transfer => {
+            const wallet = transfer.toUserAccount;
+            if (wallet && (!traders[wallet] || timestamp > traders[wallet].timestamp)) {
+              traders[wallet] = {
+                type: 'TRANSFER',
+                timestamp: timestamp,
+                amount: transfer.amount || 0
+              };
+            }
+          });
         }
       });
 
